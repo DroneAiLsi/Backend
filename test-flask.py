@@ -6,6 +6,7 @@ from ultralytics import YOLO
 from collections import Counter
 import numpy as np
 from scipy.spatial import distance
+from deep_sort_realtime.deepsort_tracker import DeepSort
 
 # Initialisation de Flask
 app = Flask(__name__)
@@ -82,65 +83,62 @@ FRAME_INTERVAL = 5  # Process every nth frame
 
 def process_video(input_file):
     cap = cv2.VideoCapture(input_file)
-    fourcc = cv2.VideoWriter_fourcc(*'H264')  # Utilisation de H264 pour la compatibilité
+    fourcc = cv2.VideoWriter_fourcc(*'H264')
     output_file = os.path.join(OUTPUT_PATH, f"result_{os.path.basename(input_file)}")
-    
-    # Vérifier que le fichier vidéo a bien été ouvert
-    if not cap.isOpened():
-        raise Exception("Erreur lors de l'ouverture du fichier vidéo.")
-
     out = cv2.VideoWriter(output_file, fourcc, cap.get(cv2.CAP_PROP_FPS),
                           (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))))
 
-    class_counts = {i: 0 for i in range(10)}  # Initialisation des comptes de classes
-    tracked_objects = {}  # Pour stocker les objets détectés
-    frame_count = 0
+    # Initialize DeepSORT
+    tracker = DeepSort(max_age=30, nn_budget=100)
+
+    class_counts = {i: 0 for i in range(10)}  # Initialize class counts
+    tracked_ids = set()  # To store unique object IDs
 
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
 
-        # Traiter chaque n-ième frame
-        if frame_count % FRAME_INTERVAL != 0:
-            frame_count += 1
-            continue
+        # Perform YOLO detection
+        results = model(frame)
+        detections = []
 
-        results = model(frame)  # Traitement par votre modèle
-        annotated_frame = results[0].plot()  # Ajout des annotations
-        out.write(annotated_frame)
-
-        # Traitement des boîtes détectées
         for box in results[0].boxes:
             class_id = int(box.cls)
             confidence = float(box.conf)
             if confidence < CONFIDENCE_THRESHOLD:
-                continue  # Ignorer les détections avec une faible confiance
+                continue
 
-            bbox = tuple(map(int, box.xyxy[0].tolist()))  # (x_min, y_min, x_max, y_max)
+            # Bounding box in (x_min, y_min, width, height) format for DeepSORT
+            x_min, y_min, x_max, y_max = map(int, box.xyxy[0].tolist())
+            width, height = x_max - x_min, y_max - y_min
+            bbox = [x_min, y_min, width, height]
 
-            # Vérifier si l'objet a déjà été suivi
-            unique = True
-            for tracked_bbox in tracked_objects.values():
-                if is_similar_bbox(bbox, tracked_bbox):
-                    unique = False
-                    break
+            detections.append((bbox, confidence, class_id))
 
-            if unique:
-                tracked_objects[frame_count] = bbox  # Suivi de l'objet
-                class_counts[class_id] += 1  # Incrémenter le compteur de classes
+        # Update the tracker with detections
+        tracks = tracker.update_tracks(detections, frame=frame)
 
-        frame_count += 1
+        for track in tracks:
+            if not track.is_confirmed():
+                continue
+
+            track_id = track.track_id
+            class_id = track.det_class
+
+            # Count each unique object ID once
+            if track_id not in tracked_ids:
+                tracked_ids.add(track_id)
+                class_counts[class_id] += 1
+
+        # Annotate frame (optional)
+        annotated_frame = results[0].plot()
+        out.write(annotated_frame)
 
     cap.release()
     out.release()
 
-    # Générer des statistiques
-    class_names = {
-        0: "pedestrian", 1: "people", 2: "bicycle", 3: "car", 4: "van",
-        5: "truck", 6: "tricycle", 7: "awning-tricycle", 8: "bus", 9: "motor"
-    }
-    
+    # Build statistics
     stats = []
     for class_id, count in class_counts.items():
         if count > 0:
@@ -150,6 +148,7 @@ def process_video(input_file):
             })
 
     return output_file, stats
+
 
 
 
