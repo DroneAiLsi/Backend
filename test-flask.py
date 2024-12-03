@@ -271,13 +271,7 @@ def download_file(filename):
     return send_file(zip_path, as_attachment=True)
 
 
-# @app.route('/download/<filename>', methods=['GET'])
-# def download_file(filename):
-#     file_path = os.path.join(OUTPUT_PATH, filename)
-#     if os.path.exists(file_path):
-#         return send_file(file_path, as_attachment=True)
-#     else:
-#         return jsonify({'error': 'Fichier non trouvé'}), 404
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
