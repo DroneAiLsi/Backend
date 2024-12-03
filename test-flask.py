@@ -6,6 +6,9 @@ from ultralytics import YOLO
 from collections import Counter
 import numpy as np
 from scipy.spatial import distance
+from fpdf import FPDF
+import zipfile
+
 from deep_sort_realtime.deepsort_tracker import DeepSort
 
 # Initialisation de Flask
@@ -20,6 +23,47 @@ INPUT_PATH = 'drone-backend/input'
 OUTPUT_PATH = 'drone-ui/public/results'
 os.makedirs(INPUT_PATH, exist_ok=True)
 os.makedirs(OUTPUT_PATH, exist_ok=True)
+
+
+
+# Fonction pour générer le PDF
+# Fonction pour générer le PDF
+def generate_pdf(stats, pdf_path):
+    """
+    Génère un fichier PDF contenant les statistiques sous forme de tableau avec un en-tête 'DroneAi'.
+    """
+    # Création du PDF
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+
+    # En-tête du document avec le titre "DroneAi" en bleu
+    pdf.set_text_color(0, 0, 255)  # Définit la couleur du texte en bleu
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(200, 10, txt="DroneAi", ln=True, align='C')
+    pdf.ln(10)  # Saut de ligne
+    pdf.set_text_color(0, 0, 0)  # Réinitialise la couleur du texte en noir
+
+    # Sous-titre pour les statistiques
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(200, 10, txt="Statistiques d'analyse", ln=True, align='C')
+    pdf.ln(10)  # Saut de ligne
+
+    # Titre du tableau avec des bordures
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(95, 10, txt="Classe", border=1, align='C')
+    pdf.cell(95, 10, txt="Nombre", border=1, align='C')
+    pdf.ln(10)  # Nouvelle ligne pour les données du tableau
+
+    # Remplissage du tableau avec les statistiques
+    pdf.set_font("Arial", size=12)
+    for stat in stats:
+        pdf.cell(95, 10, txt=stat['class'], border=1, align='C')
+        pdf.cell(95, 10, txt=str(stat['count']), border=1, align='C')
+        pdf.ln(10)  # Nouvelle ligne pour chaque entrée
+
+    # Sauvegarde du PDF
+    pdf.output(pdf_path)
 
 # Dictionnaire pour les noms des classes
 class_names = {
@@ -186,17 +230,54 @@ def process_file():
     
     return jsonify({
         'output_file': f"/results/{os.path.basename(output_file)}",
-        'stats': stats
+        'stats': stats,
+        'download_link': f"/download/{os.path.basename(output_file)}?stats={stats}"
     })
 
 
 @app.route('/download/<filename>', methods=['GET'])
 def download_file(filename):
-    file_path = os.path.join(OUTPUT_PATH, filename)
-    if os.path.exists(file_path):
-        return send_file(file_path, as_attachment=True)
-    else:
-        return jsonify({'error': 'Fichier non trouvé'}), 404
+    """
+    Télécharge un fichier ZIP contenant le fichier annoté et les statistiques au format PDF.
+    """
+    file_path = os.path.normpath(f"drone-ui/public/results/{filename}")
+    pdf_path = os.path.normpath("d:/Project DroneAi/drone-ui/public/results/stats.pdf")
+    zip_path = os.path.normpath("d:/Project DroneAi/drone-ui/public/results/result_package.zip")
+
+
+    # Vérifier si le fichier existe
+    if not os.path.exists(file_path):
+        return jsonify({'error': 'Fichier de sortie non trouvé'}), 404
+
+    # Récupérer les statistiques associées
+    stats = request.args.get('stats', None)
+    if stats:
+        stats = eval(stats)  # Convertir les statistiques en liste Python
+        generate_pdf(stats, pdf_path)
+
+    # Créer un fichier ZIP
+    with zipfile.ZipFile(zip_path, 'w') as zipf:
+     if os.path.exists(file_path):
+        zipf.write(file_path, os.path.basename(file_path))
+     else:
+        print("File to be zipped does not exist.")
+     if os.path.exists(pdf_path):
+        zipf.write(pdf_path, os.path.basename(pdf_path))
+     else:
+        print("PDF file does not exist.")
+
+
+    # Envoyer le fichier ZIP
+    return send_file(zip_path, as_attachment=True)
+
+
+# @app.route('/download/<filename>', methods=['GET'])
+# def download_file(filename):
+#     file_path = os.path.join(OUTPUT_PATH, filename)
+#     if os.path.exists(file_path):
+#         return send_file(file_path, as_attachment=True)
+#     else:
+#         return jsonify({'error': 'Fichier non trouvé'}), 404
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
